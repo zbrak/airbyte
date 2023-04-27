@@ -1,28 +1,40 @@
+import csv
+import fnmatch
 import json
+import os
+import sys
 from abc import ABC
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import reduce
 import gzip
-import glob as globlib
 from io import IOBase
 from typing import Dict, Iterable, List, Set
 
+import boto3
+import rclone
+import smart_open
 from airbyte_cdk.models import AirbyteRecordMessage
-
-
 
 
 @dataclass
 class Config:
+    bucket: str
     streams: Dict[str, List[str]]  # globs
+    aws_s3_access_key_id: str = os.getenv("AWS_S3_ACCESS_KEY_ID")
+    aws_s3_secret_access_key: str = os.getenv("AWS_S3_SECRET_ACCESS_KEY")
 
+    def make_boto3_session_config(self) -> Dict:
+        return {
+            "aws_access_key_id": self.aws_s3_access_key_id,
+            "aws_secret_access_key": self.aws_s3_secret_access_key,
+        }
 
 @dataclass
 class FileType:
 
-    def parse(self, fp) -> Iterable[AirbyteRecordMessage]:
+    def parse(self, fp) -> Iterable[Dict]:
         pass
 
     @classmethod
@@ -34,7 +46,6 @@ class FileType:
         else:
             raise ValueError(f"Invalid suffix: {suffix}")
 
-
 class Jsonl(FileType):
     def parse(self, fp) -> Iterable[AirbyteRecordMessage]:
         for line in fp:
@@ -42,9 +53,8 @@ class Jsonl(FileType):
 
 
 class Csv(FileType):
-    ...
-
-
+    def parse(self, fp) -> Iterable[Dict]:
+        yield from csv.DictReader(fp)
 
 
 class FileCollection(ABC):
@@ -71,26 +81,51 @@ class FileCollection(ABC):
         for stream in self.get_streams():
             for file in stream.get_files():
                 for record in file.get_records():
-                    AirbyteRecordMessage(stream=stream.name, data=record, emitted_at=datetime.now()).emit()
+                    sys.stdout.write(AirbyteRecordMessage(stream=stream.name,
+                                                          data=record,
+                                                          emitted_at=int(datetime.now().timestamp())).json())
 
     def get_streams(self):
-        for name, globs in self.config.streams:
+        for name, globs in self.config.streams.items():
             yield Stream(name, globs, self)
 
     def list_files(self, glob: str) -> Iterable["File"]:
-        for path in globlib.glob(glob):
+        ls_output = rclone.with_config(make_rclone_config(self.config)).lsjson(f"remote:{self.config.bucket}")
+        remote_files = [file["Path"] for file in json.loads(ls_output["out"])]
+        for path in fnmatch.filter(remote_files, glob):
             yield File(path, file_collection=self)
+
+
+def make_rclone_config(config: Config):
+    return f"""
+    [remote]
+    type = s3
+    provider = AWS
+    env_auth = false
+    access_key_id = {config.aws_s3_access_key_id}
+    secret_access_key = {config.aws_s3_secret_access_key}
+    region = us-west-2
+    endpoint =
+    location_constraint =
+    acl = private
+    server_side_encryption =
+    storage_class =
+    """
 
 
 @dataclass
 class File:
     path: str
-    file_type: FileType
     file_collection: FileCollection
+    # file_type: FileType = None
+    # suffix: str
 
     def __post_init__(self):
-        suffix = self.path.rsplit(".")[-1]
-        self.file_type = FileType.from_suffix(suffix)
+        self.suffix = self.path.rsplit(".")[-1]
+        self.file_type = FileType.from_suffix(self.suffix)
+
+    def __hash__(self) -> int:
+        return hash(self.path)
 
     @contextmanager
     def plain_text_opener(self, fp: IOBase) -> IOBase:
@@ -102,7 +137,7 @@ class File:
         else:
             yield fp
 
-    def get_records(self) -> Iterable[AirbyteRecordMessage]:
+    def get_records(self) -> Iterable[Dict]:
         with self.file_collection.open_file(self.path) as maybe_compressed_fp:
             with self.plain_text_opener(maybe_compressed_fp) as plain_text_fp:
                 yield from self.file_type.parse(plain_text_fp)
@@ -118,13 +153,17 @@ class Stream:
         return reduce(lambda a, b: a | b, (set(self.file_collection.list_files(glob)) for glob in self.globs))
 
 
+@dataclass
 class S3Bucket(FileCollection):
+    config: Config
 
-    def authenticate(self, *args, **kwargs):
-        pass
+    def open_file(self, path: str) -> IOBase:
+        session = boto3.Session(**self.config.make_boto3_session_config())
+        url = f"s3://{self.config.bucket}/{path}"
+        return smart_open.open(url, transport_params={"client": session.client('s3')})
 
 
 if __name__ == "__main__":
-    config = Config(streams={"stream-1": ["*.json"]})
-    bucket = S3Bucket(config)
-    bucket.read()  # for every stream, read each file & emit its data as AirbyteRecords
+    _config = Config(bucket="airbyte-test-catherine", streams={"stream-1": ["*.csv"]})
+    _bucket = S3Bucket(_config)
+    _bucket.read()  # for every stream, read each file & emit its data as AirbyteRecords

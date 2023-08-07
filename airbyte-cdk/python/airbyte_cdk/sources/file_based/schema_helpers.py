@@ -35,11 +35,31 @@ class ComparableType(Enum):
 TYPE_PYTHON_MAPPING: Mapping[str, Tuple[str, Optional[Type[Any]]]] = {
     "null": ("null", None),
     "array": ("array", list),
+    "list": ("array", list),
+    "bool": ("boolean", bool),
+    "_bool": ("boolean", bool),
     "boolean": ("boolean", bool),
     "float": ("number", float),
+    "float64": ("number", float),
+    "float16": ("number", float),
+    "float32": ("number", float),
+    "decimal128": ("number", float),
+    "decimal256": ("number", float),
+    "halffloat": ("number", float),
+    "double": ("number", float),
     "integer": ("integer", int),
+    "int64": ("integer", int),
+    "int8": ("integer", int),
+    "int16": ("integer", int),
+    "int32": ("integer", int),
+    "uint64": ("integer", int),
+    "uint8": ("integer", int),
+    "uint16": ("integer", int),
+    "uint32": ("integer", int),
     "number": ("number", float),
     "object": ("object", dict),
+    "struct": ("object", dict),
+    "large_string": ("string", str),
     "string": ("string", str),
 }
 PYTHON_TYPE_MAPPING = {t: k for k, (_, t) in TYPE_PYTHON_MAPPING.items()}
@@ -209,7 +229,7 @@ def _parse_json_input(input_schema: Union[str, Mapping[str, str]]) -> Optional[M
     return schema
 
 
-def type_mapping_to_jsonschema(input_schema: Optional[Union[str, Mapping[str, str]]]) -> Optional[Mapping[str, Any]]:
+def type_mapping_to_json_types(input_schema: Mapping[str, str]) -> Dict[str, Any]:
     """
     Return the user input schema (type mapping), transformed to JSON Schema format.
 
@@ -217,14 +237,9 @@ def type_mapping_to_jsonschema(input_schema: Optional[Union[str, Mapping[str, st
         - is a key:value map
         - all values in the map correspond to a JsonSchema datatype
     """
-    if not input_schema:
-        return None
-
     result_schema = {}
 
-    json_mapping = _parse_json_input(input_schema) or {}
-
-    for col_name, type_name in json_mapping.items():
+    for col_name, type_name in input_schema.items():
         col_name, type_name = col_name.strip(), type_name.strip()
         if not (col_name and type_name):
             raise ConfigValidationError(
@@ -242,4 +257,20 @@ def type_mapping_to_jsonschema(input_schema: Optional[Union[str, Mapping[str, st
         json_schema_type = _json_schema_type[0]
         result_schema[col_name] = {"type": json_schema_type}
 
-    return {"type": "object", "properties": result_schema}
+    return result_schema
+
+
+def type_mapping_to_jsonschema(input_schema: Optional[Union[str, Mapping[str, str]]]) -> Optional[Dict[str, Any]]:
+    """
+    Return the user input schema (type mapping), transformed to JSON Schema format.
+
+    Verify that the input schema:
+        - is a key:value map
+        - all values in the map correspond to a JsonSchema datatype
+    """
+    if not input_schema:
+        return None
+
+    input_schema = _parse_json_input(input_schema) or {}
+
+    return {"type": "object", "properties": type_mapping_to_json_types(input_schema)}

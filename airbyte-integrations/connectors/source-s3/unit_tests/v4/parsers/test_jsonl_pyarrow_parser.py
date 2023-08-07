@@ -10,7 +10,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 from airbyte_cdk.sources.file_based.exceptions import RecordParseError
-from airbyte_cdk.sources.file_based.file_types import JsonlParser
+from source_s3.v4.parsers.jsonl_pyarrow_parser import JsonlPyarrowParser
 
 
 @pytest.mark.parametrize(
@@ -55,9 +55,28 @@ from airbyte_cdk.sources.file_based.file_types import JsonlParser
         pytest.param({}, {}, id="no_records"),
     ]
 )
-def test_type_mapping(record: Dict[str, Any], expected_schema: Mapping[str, str]) -> None:
-    if expected_schema is None:
-        with pytest.raises(ValueError):
-            JsonlParser().infer_schema_for_record(record)
-    else:
-        assert JsonlParser.infer_schema_for_record(record) == expected_schema
+def test_infer_schema(data: Dict[str, Any], expected_schema: Mapping[str, str]) -> None:
+    df = pd.DataFrame(data)
+    table = pa.Table.from_pandas(df)
+    assert JsonlPyarrowParser._get_schema_for_table(table) == expected_schema
+
+
+@pytest.mark.parametrize(
+    "data, expected_schema",
+    [
+        pytest.param(
+            {"col1": ["val1", False]}, None, id="mixed_types_raises_exception"
+        ),
+    ]
+)
+def test_read_table_errors_on_mixed_data_types(data: Dict[str, Any], expected_schema: Mapping[str, str]) -> None:
+    # This test demonstrates the current behavior when pyarrow reads a jsonl file whose
+    # contents contain a mix of types for a given column.
+    fh = io.BytesIO()
+
+    for line in data:
+        fh.write((json.dumps(line) + '\n').encode("utf-8"))
+
+    fh.seek(0)
+    with pytest.raises(RecordParseError):
+        JsonlPyarrowParser()._read_table(fh)

@@ -111,6 +111,7 @@ from unit_tests.sources.file_based.scenarios.user_input_schema_scenarios import 
     multi_stream_user_input_schema_scenario_skip_nonconforming_records,
     single_stream_user_input_schema_scenario_emit_nonconforming_records,
     single_stream_user_input_schema_scenario_schema_is_invalid,
+    single_stream_user_input_schema_scenario_schema_with_fewer_columns,
     single_stream_user_input_schema_scenario_skip_nonconforming_records,
     valid_multi_stream_user_input_schema_scenario,
     valid_single_stream_user_input_schema_scenario,
@@ -200,6 +201,7 @@ discover_scenarios = [
     csv_autogenerate_column_names_scenario,
     parquet_with_invalid_config_scenario,
     single_partitioned_parquet_scenario,
+    single_stream_user_input_schema_scenario_schema_with_fewer_columns,
 ]
 
 

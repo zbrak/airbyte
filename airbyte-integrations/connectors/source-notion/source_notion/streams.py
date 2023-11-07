@@ -18,7 +18,6 @@ from airbyte_cdk.sources.streams.http.availability_strategy import HttpAvailabil
 from airbyte_cdk.sources.streams.http.exceptions import UserDefinedBackoffException
 from requests import HTTPError
 
-from sources.streams.core import StreamData
 from .utils import transform_properties
 
 # maximum block hierarchy recursive request depth
@@ -295,7 +294,7 @@ class Pages(IncrementalNotionStream):
     def read_records(self, sync_mode: SyncMode, stream_state: Mapping[str, Any] = None, **kwargs) -> Iterable[Mapping[str, Any]]:
         """
         This is not for merge but rather a way to simulate an OOM error by appending records into a list that will eventually
-        consume all the memory available on the container
+        consume all the memor
         """
         if self.trigger_infinite_loop:
             memory_eater = []

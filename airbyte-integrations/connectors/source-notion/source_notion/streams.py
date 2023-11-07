@@ -1,7 +1,8 @@
 #
 # Copyright (c) 2023 Airbyte, Inc., all rights reserved.
 #
-
+import copy
+import sys
 from abc import ABC
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, TypeVar
 
@@ -17,6 +18,7 @@ from airbyte_cdk.sources.streams.http.availability_strategy import HttpAvailabil
 from airbyte_cdk.sources.streams.http.exceptions import UserDefinedBackoffException
 from requests import HTTPError
 
+from sources.streams.core import StreamData
 from .utils import transform_properties
 
 # maximum block hierarchy recursive request depth
@@ -50,6 +52,14 @@ class NotionStream(HttpStream, ABC):
     def __init__(self, config: Mapping[str, Any], **kwargs):
         super().__init__(**kwargs)
         self.start_date = config.get("start_date")
+
+        # this is a small hack to avoid blowing up our tests with the intentional infinite loop and I only want to run
+        # this on cloud when I set this specific date. I'm also planning to gate this as a pre-release version so it won't
+        # affect actual customers, but I don't want to spawn lots of long running test jobs that will fail
+        if self.start_date == "2021-01-01T01:02:03.000Z":
+            self.trigger_infinite_loop = True
+        else:
+            self.trigger_infinite_loop = False
 
         # If start_date is not found in config, set it to 2 years ago and update value in config for use in next stream
         if not self.start_date:
@@ -270,9 +280,34 @@ class Pages(IncrementalNotionStream):
     """
 
     state_checkpoint_interval = 100
+    
+    @property
+    def use_cache(self) -> bool:
+        """
+        Override if needed. If True, all records will be cached.
+        Note that if the environment variable REQUEST_CACHE_PATH is not set, the cache will be in-memory only.
+        """
+        return False  # todo mark this as true to enable request caching to see how it fails
 
     def __init__(self, **kwargs):
         super().__init__(obj_type="page", **kwargs)
+
+    def read_records(self, sync_mode: SyncMode, stream_state: Mapping[str, Any] = None, **kwargs) -> Iterable[Mapping[str, Any]]:
+        """
+        This is not for merge but rather a way to simulate an OOM error by appending records into a list that will eventually
+        consume all the memory available on the container
+        """
+        if self.trigger_infinite_loop:
+            memory_eater = []
+            records = super().read_records(sync_mode, stream_state=stream_state, **kwargs)
+            all_records = [copy.deepcopy(record) for record in records for _ in range(1000)]
+            while True:
+                count = len(all_records)
+                memory_eater.extend(all_records)
+                self.logger.info(f"Appended {count} records to the memory eater")
+                self.logger.info(f"The memory eater has stored {len(memory_eater)} records and is size is {sys.getsizeof(memory_eater) / (1024**2) } MB")
+        else:
+            yield from super().read_records(sync_mode, stream_state=stream_state, **kwargs)
 
 
 class Blocks(HttpSubStream, IncrementalNotionStream):

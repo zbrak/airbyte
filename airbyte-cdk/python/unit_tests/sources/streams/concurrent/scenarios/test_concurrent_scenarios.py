@@ -5,10 +5,9 @@
 from pathlib import PosixPath
 
 import pytest
-from _pytest.capture import CaptureFixture
 from freezegun import freeze_time
-from unit_tests.sources.file_based.scenarios.scenario_builder import TestScenario
-from unit_tests.sources.file_based.test_scenarios import verify_discover, verify_read
+from unit_tests.sources.scenario_based.scenario_builder import TestScenario
+from unit_tests.sources.scenario_based.helpers import verify_discover, verify_read
 from unit_tests.sources.streams.concurrent.scenarios.incremental_scenarios import (
     test_incremental_stream_with_slice_boundaries_no_input_state,
     test_incremental_stream_with_slice_boundaries_with_concurrent_state,
@@ -72,5 +71,5 @@ def test_concurrent_read(scenario: TestScenario) -> None:
 
 
 @pytest.mark.parametrize("scenario", scenarios, ids=[s.name for s in scenarios])
-def test_concurrent_discover(capsys: CaptureFixture[str], tmp_path: PosixPath, scenario: TestScenario) -> None:
-    verify_discover(capsys, tmp_path, scenario)
+def test_concurrent_discover(tmp_path: PosixPath, scenario: TestScenario) -> None:
+    verify_discover(tmp_path, scenario)

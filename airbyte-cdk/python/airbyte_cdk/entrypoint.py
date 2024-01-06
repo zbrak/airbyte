@@ -207,10 +207,14 @@ class AirbyteEntrypoint(object):
         return
 
 
-def launch(source: Source, args: List[str]) -> None:
+def get_source_iter(source: Source, args: List[str]) -> Iterable[str]:
     source_entrypoint = AirbyteEntrypoint(source)
     parsed_args = source_entrypoint.parse_args(args)
-    for message in source_entrypoint.run(parsed_args):
+    return source_entrypoint.run(parsed_args)
+
+
+def launch(source: Source, args: List[str]) -> None:
+    for message in get_source_iter(source, args):
         print(message)
 
 

@@ -154,6 +154,7 @@ def should_use_remote_secrets(use_remote_secrets: Optional[bool]) -> bool:
         "migrate_to_base_image": "pipelines.airbyte_ci.connectors.migrate_to_base_image.commands.migrate_to_base_image",
         "upgrade_base_image": "pipelines.airbyte_ci.connectors.upgrade_base_image.commands.upgrade_base_image",
         "upgrade_cdk": "pipelines.airbyte_ci.connectors.upgrade_cdk.commands.bump_version",
+        "upgrade_java_cdk": "pipelines.airbyte_ci.connectors.upgrade_java_cdk.commands.upgrade_java_cdk_version",
     },
 )
 @click.option(

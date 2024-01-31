@@ -264,16 +264,6 @@ class Lists(SemiIncrementalKlaviyoStream):
 
     max_retries = 10
     cursor_field = "updated"
-
-    def path(self, **kwargs) -> str:
-        return "lists"
-
-
-class BadLists(IncrementalKlaviyoStream):
-    """Docs: https://developers.klaviyo.com/en/reference/get_lists"""
-
-    max_retries = 10
-    cursor_field = "updated"
     availability_strategy = None
 
     def path(self, **kwargs) -> str:
@@ -326,16 +316,6 @@ class Flows(ArchivedRecordsMixin, IncrementalKlaviyoStream):
 
     cursor_field = "updated"
     state_checkpoint_interval = 50  # API can return maximum 50 records per page
-
-    def path(self, **kwargs) -> str:
-        return "flows"
-
-
-class BadFlows(IncrementalKlaviyoStream):
-    """Docs: https://developers.klaviyo.com/en/reference/get_events"""
-
-    cursor_field = "updated"
-    state_checkpoint_interval = 50  # API can return maximum 50 records per page
     availability_strategy = None
 
     def path(self, **kwargs) -> str:
@@ -359,23 +339,3 @@ class EmailTemplates(IncrementalKlaviyoStream):
 
     def path(self, **kwargs) -> str:
         return "templates"
-
-
-class BadEmailTemplates(IncrementalKlaviyoStream):
-    """Docs: https://developers.klaviyo.com/en/reference/get_templates"""
-
-    cursor_field = "updated"
-    state_checkpoint_interval = 10  # API can return maximum 10 records per page
-    availability_strategy = None
-
-    def path(self, **kwargs) -> str:
-        return "templates"
-
-    def read_records(
-        self,
-        sync_mode: SyncMode,
-        cursor_field: Optional[List[str]] = None,
-        stream_slice: Optional[Mapping[str, Any]] = None,
-        stream_state: Optional[Mapping[str, Any]] = None,
-    ) -> Iterable[StreamData]:
-        raise Exception("bad email templates response")

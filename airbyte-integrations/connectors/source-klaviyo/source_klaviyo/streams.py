@@ -357,3 +357,13 @@ class EmailTemplates(IncrementalKlaviyoStream):
 
     def path(self, **kwargs) -> str:
         return "templates"
+
+
+class BadEmailTemplates(IncrementalKlaviyoStream):
+    """Docs: https://developers.klaviyo.com/en/reference/get_templates"""
+
+    cursor_field = "updated"
+    state_checkpoint_interval = 10  # API can return maximum 10 records per page
+
+    def path(self, **kwargs) -> str:
+        return "templates"

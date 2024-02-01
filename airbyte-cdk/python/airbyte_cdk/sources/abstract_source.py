@@ -15,7 +15,6 @@ from airbyte_cdk.models import (
     ConfiguredAirbyteCatalog,
     ConfiguredAirbyteStream,
     Status,
-    StreamDescriptor,
     SyncMode,
 )
 from airbyte_cdk.models import Type as MessageType
@@ -135,8 +134,10 @@ class AbstractSource(Source, ABC):
                     logger.info(f"Marking stream {configured_stream.stream.name} as STOPPED")
                     yield stream_status_as_airbyte_message(configured_stream.stream, AirbyteStreamStatus.COMPLETE)
                 except AirbyteTracedException as e:
+                    logger.exception(f"Encountered an exception while reading stream {configured_stream.stream.name}")
+                    logger.info(f"Marking stream {configured_stream.stream.name} as STOPPED")
                     yield stream_status_as_airbyte_message(configured_stream.stream, AirbyteStreamStatus.INCOMPLETE)
-                    yield e.as_sanitized_airbyte_message(stream_descriptor=StreamDescriptor(name=stream_instance.name))
+                    yield e.as_airbyte_message()  # e.as_sanitized_airbyte_message()
                     if self.stop_sync_on_stream_failure:
                         break
                     stream_name_to_exception[stream_instance.name] = e
@@ -150,7 +151,7 @@ class AbstractSource(Source, ABC):
                         traced_exception = AirbyteTracedException.from_exception(e, message=display_message)
                     else:
                         traced_exception = AirbyteTracedException.from_exception(e)
-                    yield traced_exception.as_sanitized_airbyte_message(stream_descriptor=StreamDescriptor(name=stream_instance.name))
+                    yield traced_exception.as_airbyte_message()  # traced_exception.as_sanitized_airbyte_message()
                     if self.stop_sync_on_stream_failure:
                         break
                     stream_name_to_exception[stream_instance.name] = traced_exception

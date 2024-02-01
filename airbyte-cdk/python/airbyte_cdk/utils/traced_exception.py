@@ -13,7 +13,6 @@ from airbyte_cdk.models import (
     AirbyteTraceMessage,
     FailureType,
     Status,
-    StreamDescriptor,
     TraceType,
 )
 from airbyte_cdk.models import Type as MessageType
@@ -44,7 +43,7 @@ class AirbyteTracedException(Exception):
         self._exception = exception
         super().__init__(internal_message)
 
-    def as_airbyte_message(self, stream_descriptor: StreamDescriptor = None) -> AirbyteMessage:
+    def as_airbyte_message(self) -> AirbyteMessage:
         """
         Builds an AirbyteTraceMessage from the exception
         """
@@ -61,7 +60,6 @@ class AirbyteTracedException(Exception):
                 internal_message=self.internal_message,
                 failure_type=self.failure_type,
                 stack_trace=stack_trace_str,
-                stream_descriptor=stream_descriptor,
             ),
         )
 
@@ -91,11 +89,11 @@ class AirbyteTracedException(Exception):
         """
         return cls(internal_message=str(exc), exception=exc, *args, **kwargs)  # type: ignore  # ignoring because of args and kwargs
 
-    def as_sanitized_airbyte_message(self, stream_descriptor: StreamDescriptor = None) -> AirbyteMessage:
+    def as_sanitized_airbyte_message(self) -> AirbyteMessage:
         """
         Builds an AirbyteTraceMessage from the exception and sanitizes any secrets from the message body
         """
-        error_message = self.as_airbyte_message(stream_descriptor=stream_descriptor)
+        error_message = self.as_airbyte_message()
         if error_message.trace.error.message:
             error_message.trace.error.message = filter_secrets(error_message.trace.error.message)
         if error_message.trace.error.internal_message:

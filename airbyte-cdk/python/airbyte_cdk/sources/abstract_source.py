@@ -138,9 +138,9 @@ class AbstractSource(Source, ABC):
                     logger.info(f"Marking stream {configured_stream.stream.name} as STOPPED")
                     yield stream_status_as_airbyte_message(configured_stream.stream, AirbyteStreamStatus.INCOMPLETE)
                     yield e.as_airbyte_message()  # e.as_sanitized_airbyte_message()
+                    stream_name_to_exception[stream_instance.name] = e
                     if self.stop_sync_on_stream_failure:
                         break
-                    stream_name_to_exception[stream_instance.name] = e
                 except Exception as e:
                     yield from self._emit_queued_messages()
                     logger.exception(f"Encountered an exception while reading stream {configured_stream.stream.name}")
@@ -151,17 +151,19 @@ class AbstractSource(Source, ABC):
                         traced_exception = AirbyteTracedException.from_exception(e, message=display_message)
                     else:
                         traced_exception = AirbyteTracedException.from_exception(e)
-                    yield traced_exception.as_airbyte_message()  # traced_exception.as_sanitized_airbyte_message()
+                    yield traced_exception.as_airbyte_message()  # traced_exception.as_sanitized_airbyte_message() also need to add back the descriptor
+                    stream_name_to_exception[stream_instance.name] = traced_exception
                     if self.stop_sync_on_stream_failure:
                         break
-                    stream_name_to_exception[stream_instance.name] = traced_exception
                 finally:
                     timer.finish_event()
                     logger.info(f"Finished syncing {configured_stream.stream.name}")
                     logger.info(timer.report())
 
         if not self.stop_sync_on_stream_failure and len(stream_name_to_exception) > 0:
-            logger.info(self._generate_failed_streams_error_message(stream_name_to_exception))
+            error_message = self._generate_failed_streams_error_message(stream_name_to_exception)
+            logger.info(error_message)
+            raise AirbyteTracedException(message=error_message)
         logger.info(f"Finished syncing {self.name}")
 
     @property

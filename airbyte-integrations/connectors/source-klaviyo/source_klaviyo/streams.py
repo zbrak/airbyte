@@ -285,7 +285,7 @@ class BadLists(IncrementalKlaviyoStream):
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[StreamData]:
-        raise Exception("bad lists response")
+        raise Exception("bad lists response from server")
 
 
 class GlobalExclusions(Profiles):

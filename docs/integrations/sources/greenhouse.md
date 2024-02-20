@@ -6,7 +6,9 @@ This page contains the setup guide and reference information for the Greenhouse 
 
 To set up the Greenhouse source connector, you'll need the [Harvest API key](https://developers.greenhouse.io/harvest.html#authentication) with permissions to the resources Airbyte should be able to access.
 
-## Set up the Greenhouse connector in Airbyte
+## Setup guide
+
+### Set up the Greenhouse connector in Airbyte
 
 1. [Log into your Airbyte Cloud](https://cloud.airbyte.com/workspaces) account or navigate to the Airbyte Open Source dashboard.
 2. Click **Sources** and then click **+ New source**.

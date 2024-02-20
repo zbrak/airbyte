@@ -88,6 +88,11 @@ definitions:
     $parameters:
       name: "candidates"
       path: "candidates"
+  bad_candidates_stream:
+    $ref: "#/definitions/base_incremental_stream"
+    $parameters:
+      name: "bad_candidates"
+      path: "candidates/nononono"
   close_reasons_stream:
     $ref: "#/definitions/base_stream"
     $parameters:
@@ -395,6 +400,7 @@ streams:
   - "#/definitions/applications_demographics_answers_stream"
   - "#/definitions/applications_interviews_stream"
   - "#/definitions/candidates_stream"
+  - "#/definitions/bad_candidates_stream"
   - "#/definitions/close_reasons_stream"
   - "#/definitions/custom_fields_stream"
   - "#/definitions/degrees_stream"

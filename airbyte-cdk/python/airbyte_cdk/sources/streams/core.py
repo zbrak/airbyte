@@ -210,7 +210,10 @@ class Stream(ABC):
         if self.namespace:
             stream.namespace = self.namespace
 
-        if self.supports_incremental:
+        if self.supports_resumable_full_refresh:
+            stream.source_defined_cursor = self.source_defined_cursor
+            stream.default_cursor_field = self._wrapped_cursor_field()
+        elif self.supports_incremental:
             stream.source_defined_cursor = self.source_defined_cursor
             stream.supported_sync_modes.append(SyncMode.incremental)  # type: ignore
             stream.default_cursor_field = self._wrapped_cursor_field()
@@ -227,6 +230,13 @@ class Stream(ABC):
         :return: True if this stream supports incrementally reading data
         """
         return len(self._wrapped_cursor_field()) > 0
+
+    @property
+    def supports_resumable_full_refresh(self) -> bool:
+        """
+        :return: True if stream allows for resumable full refresh. Streams can override this on case by case basis
+        """
+        return False
 
     def _wrapped_cursor_field(self) -> List[str]:
         return [self.cursor_field] if isinstance(self.cursor_field, str) else self.cursor_field

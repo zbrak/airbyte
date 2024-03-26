@@ -10,13 +10,14 @@ from abc import ABC, abstractmethod
 from datetime import timedelta
 from functools import cached_property, lru_cache
 from http import HTTPStatus
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Set, Tuple, Union
+from typing import Any, Deque, Dict, Iterable, List, Mapping, MutableMapping, Optional, Set, Tuple, Union
 
 import backoff
 import pendulum as pendulum
 import requests
 from airbyte_cdk.entrypoint import logger
-from airbyte_cdk.models import FailureType, SyncMode
+from airbyte_cdk.models import ConfiguredAirbyteStream, FailureType, SyncMode
+from airbyte_cdk.models import Type as MessageType
 from airbyte_cdk.sources import Source
 from airbyte_cdk.sources.streams import IncrementalMixin, Stream
 from airbyte_cdk.sources.streams.availability_strategy import AvailabilityStrategy
@@ -24,7 +25,8 @@ from airbyte_cdk.sources.streams.core import StreamData
 from airbyte_cdk.sources.streams.http import HttpStream, HttpSubStream
 from airbyte_cdk.sources.streams.http.availability_strategy import HttpAvailabilityStrategy
 from airbyte_cdk.sources.streams.http.requests_native_auth import Oauth2Authenticator, TokenAuthenticator
-from airbyte_cdk.sources.utils.schema_helpers import ResourceSchemaLoader
+from airbyte_cdk.sources.utils.schema_helpers import InternalConfig, ResourceSchemaLoader
+from airbyte_cdk.sources.utils.slice_logger import SliceLogger
 from airbyte_cdk.sources.utils.transform import TransformConfig, TypeTransformer
 from airbyte_cdk.utils import AirbyteTracedException
 from requests import HTTPError, codes
@@ -1347,7 +1349,7 @@ class ContactLists(IncrementalStream):
     unnest_fields = ["metaData"]
 
 
-class ContactsAllBase(Stream):
+class ContactsAllBase(Stream, IncrementalMixin):
     url = "/contacts/v1/lists/all/contacts/all"
     updated_at_field = "timestamp"
     more_key = "has-more"
@@ -1360,6 +1362,29 @@ class ContactsAllBase(Stream):
     records_field = None
     filter_field = None
     filter_value = None
+    limit_field = "count"
+    state_checkpoint_interval = None
+    _state = {}
+    limit = 100
+
+    # todo remove later, but this is for testing
+    fail_after_records = 1800
+
+    @property
+    def cursor_field(self) -> Union[str, List[str]]:
+        return "vidOffset"
+
+    @property
+    def supports_resumable_full_refresh(self) -> bool:
+        return True
+
+    @property
+    def state(self) -> MutableMapping[str, Any]:
+        return self._state
+
+    @state.setter
+    def state(self, value: MutableMapping[str, Any]) -> None:
+        self._state = value
 
     def _transform(self, records: Iterable) -> Iterable:
         for record in super()._transform(records):
@@ -1378,8 +1403,158 @@ class ContactsAllBase(Stream):
             params.update({self.filter_field: self.filter_value})
         return params
 
+    def stream_slices(
+        self, *, sync_mode: SyncMode, cursor_field: Optional[List[str]] = None, stream_state: Optional[Mapping[str, Any]] = None
+    ) -> Iterable[Optional[Mapping[str, Any]]]:
+        # It would be very interesting if this could be the mechanism for feeding next stream slice to sync back out from read_records
+        yield None
 
-class ContactsListMemberships(ContactsAllBase, ABC):
+    def read(  # type: ignore  # ignoring typing for ConnectorStateManager because of circular dependencies
+        self,
+        configured_stream: ConfiguredAirbyteStream,
+        logger: logging.Logger,
+        slice_logger: SliceLogger,
+        stream_state: MutableMapping[str, Any],
+        state_manager,
+        internal_config: InternalConfig,
+    ) -> Iterable[StreamData]:
+        """
+        This is an experimental Stream.read() implementation that allows for RFR. We typically do not ever want developers to override
+        this method on a per-connector basis because this should be built into the CDK, however,
+        """
+        sync_mode = configured_stream.sync_mode
+        cursor_field = configured_stream.cursor_field
+
+        # We don't care about stream_slicing for RFR in many cases because pagination tends to be a dynamic and unbounded set
+        # slices = self.stream_slices(
+        #     cursor_field=cursor_field,
+        #     sync_mode=sync_mode,  # todo: change this interface to no longer rely on sync_mode for behavior
+        #     stream_state=stream_state,
+        # )
+
+        record_counter = 0
+        is_complete = False
+        while not is_complete:
+            records = self.read_records(
+                sync_mode=sync_mode,  # don't care about this
+                stream_slice={},  # don't care about this
+                stream_state={},  # don't care about this now_stream state is useless because we load it via self.state
+                cursor_field=cursor_field or None,  # technically we don't need this because this stream uses the more_key field
+            )
+            whole_records = [record for record in records]
+            records = whole_records
+            for record_data_or_message in records:
+                yield record_data_or_message
+                if isinstance(record_data_or_message, Mapping) or (
+                    hasattr(record_data_or_message, "type") and record_data_or_message.type == MessageType.RECORD
+                ):
+                    record_data = record_data_or_message if isinstance(record_data_or_message, Mapping) else record_data_or_message.record
+                    # note we never actually use this for RFR because we rely on internal self.state for state management
+                    if self.cursor_field:
+                        # Some connectors have streams that implement get_updated_state(), but do not define a cursor_field. This
+                        # should be fixed on the stream implementation, but we should also protect against this in the CDK as well
+                        stream_state = self.get_updated_state(stream_state, record_data)
+                    record_counter += 1
+
+                    # For simplicity, we don't need this given how frequently we might be writing state per page so I've disabled it
+                    # at the ContactsAllBase level
+                    if sync_mode == SyncMode.incremental:
+                        # Checkpoint intervals are a bit controversial, but see below comment about why we're gating it right now
+                        checkpoint_interval = self.state_checkpoint_interval
+                        if checkpoint_interval and record_counter % checkpoint_interval == 0:
+                            airbyte_state_message = self._checkpoint_state(stream_state, state_manager)
+                            yield airbyte_state_message
+
+                    # This is purely a hack to break the sync midway through and test that we can pick up on the next iteration
+                    if record_counter > self.fail_after_records:
+                        raise AirbyteTracedException(
+                            internal_message=f"Sometimes I crash for no other reason than that I can only process {self.fail_after_records} records per attempt",
+                            message="I crashed for an unspecific reason related to functional testing. Ask Airbyte to know more",
+                            failure_type=FailureType.config_error,
+                        )
+
+                    if internal_config.is_limit_reached(record_counter):
+                        break
+
+            # Resumable full refresh implementation wise behaves like an incremental but is perceived at the catalog level as full_refresh
+            # if sync_mode == SyncMode.incremental:
+            airbyte_state_message = self._checkpoint_state(stream_state, state_manager)
+            yield airbyte_state_message
+
+            is_complete = self._is_sync_complete(state_manager=state_manager)
+
+        # I removed the has_slices concept to emit a final state message because since slicing 's not as relevant to RFR
+        if sync_mode == SyncMode.full_refresh:
+            # We use a dummy state if there is no suitable value provided by full_refresh streams that do not have a valid cursor.
+            # Incremental streams running full_refresh mode emit a meaningful state
+            airbyte_state_message = self._checkpoint_state(stream_state or {"__ab_full_refresh_state_message": True}, state_manager)
+            yield airbyte_state_message
+
+    def read_records(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: List[str] = None,
+        stream_slice: Mapping[str, Any] = None,
+        stream_state: Mapping[str, Any] = None,
+    ) -> Iterable[Mapping[str, Any]]:
+        """
+        This is a specialized read_records for resumable full refresh that only attempts to read a single page of records
+        at a time and updates the state w/ a synthetic cursor based on the Hubspot cursor pagination value `vidOffset`
+        """
+
+        next_page_token = self.state
+        try:
+            properties = self._property_wrapper
+            if properties and properties.too_many_properties:
+                records, response = self._read_stream_records(
+                    stream_slice=stream_slice,
+                    stream_state=stream_state,
+                    next_page_token=next_page_token,
+                )
+            else:
+                response = self.handle_request(
+                    stream_slice=stream_slice,
+                    stream_state=stream_state,
+                    next_page_token=next_page_token,
+                    properties=properties,
+                )
+                records = self._transform(self.parse_response(response, stream_state=stream_state, stream_slice=stream_slice))
+
+            if self.filter_old_records:
+                records = self._filter_old_records(records)
+            yield from self.record_unnester.unnest(records)
+
+            next_page_state = self.next_page_token(response)
+            if sync_mode == SyncMode.incremental:
+                if not next_page_state:
+                    self.state = {"__ab_is_sync_complete": True}
+                else:
+                    self.state = next_page_state
+
+            # Always return an empty generator just in case no records were ever yielded
+            yield from []
+        except requests.exceptions.HTTPError as e:
+            response = e.response
+            if response.status_code == HTTPStatus.UNAUTHORIZED:
+                raise AirbyteTracedException("The authentication to HubSpot has expired. Re-authenticate to restore access to HubSpot.")
+            else:
+                raise e
+
+    def _is_sync_complete(  # type: ignore  # ignoring typing for ConnectorStateManager because of circular dependencies
+        self,
+        state_manager,
+    ) -> bool:
+        try:
+            # state_manager.update_state_for_stream(
+            #     self.name, self.namespace, self.state  # type: ignore # we know the field might not exist...
+            # )
+            # rfr_state = self.state  # type: ignore # we know the field might not exist...
+            return self.state.get("__ab_is_sync_complete", False) if self.state else False
+        except AttributeError:
+            return False
+
+
+class ContactsListMemberships(ContactsAllBase):
     """Contacts list Memberships, API v1
     The Stream was created due to issue #8477, where supporting List Memberships in Contacts stream was requested.
     According to the issue this feature is supported in API v1 by setting parameter showListMemberships=true
@@ -1393,8 +1568,11 @@ class ContactsListMemberships(ContactsAllBase, ABC):
     filter_field = "showListMemberships"
     filter_value = True
 
+    # todo remove later, but this is for testing
+    fail_after_records = 600
 
-class ContactsFormSubmissions(ContactsAllBase, ABC):
+
+class ContactsFormSubmissions(ContactsAllBase):
 
     records_field = "form-submissions"
     filter_field = "formSubmissionMode"

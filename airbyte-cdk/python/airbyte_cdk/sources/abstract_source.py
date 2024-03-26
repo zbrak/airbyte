@@ -203,13 +203,16 @@ class AbstractSource(Source, ABC):
         stream_instance.log_stream_sync_configuration()
 
         stream_name = configured_stream.stream.name
-        # The platform always passes stream state regardless of sync mode. We shouldn't need to consider this case within the
-        # connector, but right now we need to prevent accidental usage of the previous stream state
-        stream_state = (
-            state_manager.get_stream_state(stream_name, stream_instance.namespace)
-            if configured_stream.sync_mode == SyncMode.incremental
-            else {}
-        )
+
+        # for RFR, this might be a bit of a problem. We can use the sentinel value being true to make sure we start at the beginning
+        # instead of midway for failed streams. However, this has the undesirable effect of for sync jobs w/ partial success on other
+        # attempts, we throw away state for successful streams and re-attempt the full refresh
+        if configured_stream.sync_mode == SyncMode.incremental:
+            stream_state = state_manager.get_stream_state(stream_name, stream_instance.namespace)
+            if stream_state.get("__ab_is_sync_complete"):
+                stream_state = {}
+        else:
+            stream_state = {}
 
         if stream_state and "state" in dir(stream_instance) and not self._stream_state_is_full_refresh(stream_state):
             stream_instance.state = stream_state  # type: ignore # we check that state in the dir(stream_instance)

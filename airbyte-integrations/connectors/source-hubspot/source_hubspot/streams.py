@@ -1479,6 +1479,7 @@ class ContactsAllBase(Stream, IncrementalMixin):
             # Resumable full refresh implementation wise behaves like an incremental but is perceived at the catalog level as full_refresh
             # if sync_mode == SyncMode.incremental:
             airbyte_state_message = self._checkpoint_state(stream_state, state_manager)
+            logger.info(f"Finished getting a page of records and now emitting state message: f{airbyte_state_message}")
             yield airbyte_state_message
 
             is_complete = self._is_sync_complete(state_manager=state_manager)
@@ -1503,6 +1504,7 @@ class ContactsAllBase(Stream, IncrementalMixin):
         """
 
         next_page_token = self.state
+        logger.info(f"Read in self.state and setting next_page_token to: f{next_page_token}")
         try:
             properties = self._property_wrapper
             if properties and properties.too_many_properties:
@@ -1525,11 +1527,11 @@ class ContactsAllBase(Stream, IncrementalMixin):
             yield from self.record_unnester.unnest(records)
 
             next_page_state = self.next_page_token(response)
-            if sync_mode == SyncMode.incremental:
-                if not next_page_state:
-                    self.state = {"__ab_is_sync_complete": True}
-                else:
-                    self.state = next_page_state
+            if not next_page_state:
+                self.state = {"__ab_is_sync_complete": True}
+            else:
+                logger.info(f"There are more records to sync Setting self.state to: f{next_page_state}")
+                self.state = next_page_state
 
             # Always return an empty generator just in case no records were ever yielded
             yield from []

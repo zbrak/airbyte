@@ -181,6 +181,7 @@ class AirbyteEntrypoint(object):
 
             # Reset the counter
             stream_message_count[stream_descriptor] = 0
+            logger.info(f"Emitting state message to the platform: {message}")
         return message
 
     @staticmethod

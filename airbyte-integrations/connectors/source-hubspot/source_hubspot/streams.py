@@ -1470,7 +1470,7 @@ class ContactsAllBase(Stream, IncrementalMixin):
                         raise AirbyteTracedException(
                             internal_message=f"Sometimes I crash for no other reason than that I can only process {self.fail_after_records} records per attempt",
                             message="I crashed for an unspecific reason related to functional testing. Ask Airbyte to know more",
-                            failure_type=FailureType.config_error,
+                            failure_type=FailureType.system_error,
                         )
 
                     if internal_config.is_limit_reached(record_counter):

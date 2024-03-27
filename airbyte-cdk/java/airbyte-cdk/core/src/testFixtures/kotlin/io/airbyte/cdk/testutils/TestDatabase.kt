@@ -50,7 +50,7 @@ protected constructor(@JvmField val container: C) : AutoCloseable {
 
     @Volatile private var dataSource: DataSource? = null
 
-    @Volatile private var dslContext: DSLContext? = null
+    @Volatile private lateinit var dslContext: DSLContext
 
     protected val databaseId: Int
     protected val containerId: Int
@@ -101,16 +101,16 @@ protected constructor(@JvmField val container: C) : AutoCloseable {
      * the [DataSource] and [DSLContext] owned by this object.
      */
     fun initialized(): T? {
-        inContainerBootstrapCmd()!!.forEach { cmds: Stream<String?>? -> this.execInContainer(cmds) }
+        inContainerBootstrapCmd()!!.forEach { cmds: Stream<String> -> this.execInContainer(cmds) }
         this.dataSource =
             DataSourceFactory.create(
                 userName,
                 password,
                 databaseDriver!!.driverClassName,
                 jdbcUrl,
-                connectionProperties,
+                connectionProperties.toMap(),
                 JdbcConnector.getConnectionTimeout(
-                    connectionProperties,
+                    connectionProperties.toMap(),
                     databaseDriver!!.driverClassName
                 )
             )
@@ -121,9 +121,9 @@ protected constructor(@JvmField val container: C) : AutoCloseable {
     val isInitialized: Boolean
         get() = dslContext != null
 
-    protected abstract fun inContainerBootstrapCmd(): Stream<Stream<String?>?>?
+    protected abstract fun inContainerBootstrapCmd(): Stream<Stream<String>>
 
-    protected abstract fun inContainerUndoBootstrapCmd(): Stream<String?>?
+    protected abstract fun inContainerUndoBootstrapCmd(): Stream<String>
 
     abstract val databaseDriver: DatabaseDriver?
 
@@ -149,7 +149,7 @@ protected constructor(@JvmField val container: C) : AutoCloseable {
         return dataSource
     }
 
-    fun getDslContext(): DSLContext? {
+    fun getDslContext(): DSLContext {
         if (!this.isInitialized) {
             throw RuntimeException("TestDatabase instance is not yet initialized")
         }
@@ -182,14 +182,19 @@ protected constructor(@JvmField val container: C) : AutoCloseable {
         }
     }
 
-    protected fun execInContainer(cmds: Stream<String?>?) {
+    protected fun execInContainer(cmds: Stream<String>?) {
         val cmd = cmds!!.toList()
         if (cmd!!.isEmpty()) {
             return
         }
         try {
             LOGGER!!.info(
-                formatLogLine(String.format("executing command %s", Strings.join(cmd, " ")))
+                formatLogLine(
+                    String.format(
+                        "executing command %s",
+                        Strings.join(cmd.toList().asIterable(), " ")
+                    )
+                )
             )
             val exec = container!!.execInContainer(*cmd.toTypedArray<String?>())
             if (exec!!.exitCode == 0) {
@@ -222,12 +227,12 @@ protected constructor(@JvmField val container: C) : AutoCloseable {
     }
 
     @Throws(SQLException::class)
-    fun <X> query(transform: ContextQueryFunction<X?>?): X? {
+    fun <X> query(transform: ContextQueryFunction<X>): X? {
         return database!!.query(transform)
     }
 
     @Throws(SQLException::class)
-    fun <X> transaction(transform: ContextQueryFunction<X?>?): X? {
+    fun <X> transaction(transform: ContextQueryFunction<X>): X? {
         return database!!.transaction(transform)
     }
 

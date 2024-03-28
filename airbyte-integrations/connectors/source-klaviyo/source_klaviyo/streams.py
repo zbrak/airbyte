@@ -19,15 +19,15 @@ from .exceptions import KlaviyoBackoffError
 
 
 class KlaviyoStream(HttpStream, ABC):
-    """Base stream for api version v2023-10-15"""
+    """Base stream for api version v2024-02-15"""
 
     url_base = "https://a.klaviyo.com/api/"
     primary_key = "id"
     page_size = None
-    api_revision = "2023-10-15"
+    api_revision = "2024-02-15"
 
-    def __init__(self, api_key: str, start_date: Optional[str] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, api_key: str, start_date: Optional[str] = None) -> None:
+        super().__init__()
         self._api_key = api_key
         self._start_ts = start_date
 
@@ -35,7 +35,7 @@ class KlaviyoStream(HttpStream, ABC):
     def availability_strategy(self) -> Optional[AvailabilityStrategy]:
         return KlaviyoAvailabilityStrategy()
 
-    def request_headers(self, **kwargs) -> Mapping[str, Any]:
+    def request_headers(self, **kwargs: Mapping[str, Any]) -> Mapping[str, Any]:
         return {
             "Accept": "application/json",
             "Revision": self.api_revision,
@@ -72,7 +72,7 @@ class KlaviyoStream(HttpStream, ABC):
         else:
             return {"page[size]": self.page_size} if self.page_size else {}
 
-    def parse_response(self, response: Response, **kwargs) -> Iterable[Mapping]:
+    def parse_response(self, response: Response, **kwargs: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         """Return an iterable containing each record in the response"""
 
         response_json = response.json()
@@ -165,26 +165,17 @@ class IncrementalKlaviyoStream(KlaviyoStream, ABC):
 
 
 class ArchivedRecordsStream(IncrementalKlaviyoStream):
-    def __init__(
-        self,
-        path: str,
-        cursor_field: str,
-        start_date: Optional[str] = None,
-        api_revision: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(start_date=start_date, **kwargs)
-        self._path = path
-        self._cursor_field = cursor_field
-        if api_revision:
-            self.api_revision = api_revision
+    def __init__(self, base_stream: KlaviyoStream) -> None:
+        super().__init__(api_key=base_stream._api_key, start_date=base_stream._start_ts)
+        self.api_revision = base_stream.api_revision
+        self._base_stream = base_stream
 
     @property
     def cursor_field(self) -> Union[str, List[str]]:
-        return self._cursor_field
+        return self._base_stream.cursor_field
 
-    def path(self, **kwargs) -> str:
-        return self._path
+    def path(self, **kwargs: Mapping[str, Any]) -> str:
+        return self._base_stream.path(**kwargs)
 
     def request_params(
         self,
@@ -193,21 +184,23 @@ class ArchivedRecordsStream(IncrementalKlaviyoStream):
         next_page_token: Optional[Mapping[str, Any]] = None,
     ) -> MutableMapping[str, Any]:
         archived_stream_state = stream_state.get("archived") if stream_state else None
-        params = super().request_params(stream_state=archived_stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
+        params = self._base_stream.request_params(
+            stream_state=archived_stream_state, stream_slice=stream_slice, next_page_token=next_page_token
+        )
         archived_filter = "equals(archived,true)"
         if "filter" in params and archived_filter not in params["filter"]:
-            params["filter"] = f"and({params['filter']},{archived_filter})"
+            params["filter"] = f"{params['filter']},{archived_filter}"
         elif "filter" not in params:
             params["filter"] = archived_filter
         return params
 
 
-class ArchivedRecordsMixin(IncrementalKlaviyoStream, ABC):
+class StreamWithArchivedRecords(IncrementalKlaviyoStream, ABC):
     """A mixin class which should be used when archived records need to be read"""
 
     @property
     def archived_stream(self) -> ArchivedRecordsStream:
-        return ArchivedRecordsStream(self.path(), self.cursor_field, self._start_ts, self.api_revision, api_key=self._api_key)
+        return ArchivedRecordsStream(self)
 
     def get_updated_state(self, current_stream_state: MutableMapping[str, Any], latest_record: Mapping[str, Any]) -> Mapping[str, Any]:
         """
@@ -235,21 +228,67 @@ class ArchivedRecordsMixin(IncrementalKlaviyoStream, ABC):
         yield from self.archived_stream.read_records(sync_mode, cursor_field, stream_slice, stream_state)
 
 
-class Campaigns(ArchivedRecordsMixin, IncrementalKlaviyoStream):
+class Campaigns(StreamWithArchivedRecords):
     """Docs: https://developers.klaviyo.com/en/v2023-06-15/reference/get_campaigns"""
 
     cursor_field = "updated_at"
-    api_revision = "2023-06-15"
 
-    def path(self, **kwargs) -> str:
+    def stream_slices(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: Optional[List[str]] = None,
+        stream_state: Optional[Mapping[str, Any]] = None,
+    ) -> Iterable[Optional[Mapping[str, Any]]]:
+        message_channel_types = ("email", "sms")
+        for channel_type in message_channel_types:
+            yield {"filter": f"equals(messages.channel,'{channel_type}')"}
+
+    def request_params(
+        self,
+        stream_state: Optional[Mapping[str, Any]],
+        stream_slice: Optional[Mapping[str, Any]] = None,
+        next_page_token: Optional[Mapping[str, Any]] = None,
+    ) -> MutableMapping[str, Any]:
+        params = super().request_params(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
+        channel_type_filter = stream_slice["filter"]
+        if "filter" in params:
+            params["filter"] = f"{params['filter']},{channel_type_filter}"
+        else:
+            params["filter"] = channel_type_filter
+
+        params["include"] = "campaign-messages"
+        return params
+
+    @staticmethod
+    def _transform_record(record: Mapping[str, Any], campaign_messages: Mapping[str, Any]) -> Mapping[str, Any]:
+        campaign_message_id = record.get("relationships", {}).get("campaign-messages", {}).get("data", [{}])[0].get("id")
+        if campaign_message_id:
+            record["attributes"]["message"] = campaign_message_id
+            campaign_message = campaign_messages.get(campaign_message_id)
+            if campaign_message:
+                record["attributes"]["channel"] = campaign_message.get("attributes", {}).get("channel")
+                record["campaign_message"] = campaign_message
+
+        return record
+
+    @staticmethod
+    def _get_campaign_messages(response: Response) -> Mapping[str, Any]:
+        return {message["id"]: message for message in response.json().get("included", []) if message.get("type") == "campaign-message"}
+
+    def parse_response(self, response: Response, **kwargs: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
+        campaign_messages = self._get_campaign_messages(response)
+        for record in super().parse_response(response, **kwargs):
+            yield self._transform_record(record, campaign_messages)
+
+    def path(self, **kwargs: Mapping[str, Any]) -> str:
         return "campaigns"
 
 
-class Flows(ArchivedRecordsMixin, IncrementalKlaviyoStream):
+class Flows(StreamWithArchivedRecords):
     """Docs: https://developers.klaviyo.com/en/reference/get_flows"""
 
     cursor_field = "updated"
     state_checkpoint_interval = 50  # API can return maximum 50 records per page
 
-    def path(self, **kwargs) -> str:
+    def path(self, **kwargs: Mapping[str, Any]) -> str:
         return "flows"

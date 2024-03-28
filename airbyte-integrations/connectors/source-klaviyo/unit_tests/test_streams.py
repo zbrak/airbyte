@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from source_klaviyo.availability_strategy import KlaviyoAvailabilityStrategy
 from source_klaviyo.exceptions import KlaviyoBackoffError
 from source_klaviyo.source import SourceKlaviyo
-from source_klaviyo.streams import ArchivedRecordsStream, Campaigns, IncrementalKlaviyoStream, KlaviyoStream
+from source_klaviyo.streams import ArchivedRecordsStream, Campaigns, Flows, IncrementalKlaviyoStream, KlaviyoStream
 
 API_KEY = "some_key"
 START_DATE = pendulum.datetime(2020, 10, 10)
@@ -142,21 +142,19 @@ class TestKlaviyoStream:
         ("status_code", "retry_after", "expected_time"),
         ((429, 30, 30.0), (429, None, None), (200, 30, None), (200, None, None)),
     )
-    def test_backoff_time(self, status_code, retry_after, expected_time):
+    def test_backoff_time(self, response, status_code, retry_after, expected_time):
         stream = SomeStream(api_key=API_KEY)
-        response_mock = mock.MagicMock()
-        response_mock.status_code = status_code
-        response_mock.headers = {"Retry-After": retry_after}
-        assert stream.backoff_time(response_mock) == expected_time
+        response.status_code = status_code
+        response.headers = {"Retry-After": retry_after}
+        assert stream.backoff_time(response) == expected_time
 
-    def test_backoff_time_large_retry_after(self):
+    def test_backoff_time_large_retry_after(self, response):
         stream = SomeStream(api_key=API_KEY)
-        response_mock = mock.MagicMock()
-        response_mock.status_code = 429
+        response.status_code = 429
         retry_after = stream.max_time + 5
-        response_mock.headers = {"Retry-After": retry_after}
+        response.headers = {"Retry-After": retry_after}
         with pytest.raises(KlaviyoBackoffError) as e:
-            stream.backoff_time(response_mock)
+            stream.backoff_time(response)
         error_message = (
             f"Stream some_stream has reached rate limit with 'Retry-After' of {float(retry_after)} seconds, "
             "exit from stream."
@@ -380,14 +378,14 @@ class TestCampaignsStream:
         stream = Campaigns(api_key=API_KEY)
         requests_mock.register_uri(
             "GET",
-            "https://a.klaviyo.com/api/campaigns?sort=updated_at",
+            "https://a.klaviyo.com/api/campaigns?sort=updated_at&filter=equals%28messages.channel%2C%27%7Bsms%7D%27%29&include=campaign-messages",
             status_code=200,
             json={"data": input_records},
             complete_qs=True,
         )
         requests_mock.register_uri(
             "GET",
-            "https://a.klaviyo.com/api/campaigns?sort=updated_at&filter=equals(archived,true)",
+            "https://a.klaviyo.com/api/campaigns?sort=updated_at&filter=equals%28messages.channel%2C%27%7Bsms%7D%27%29%2Cequals%28archived%2Ctrue%29&include=campaign-messages",
             status_code=200,
             json={"data": input_records_archived},
             complete_qs=True,
@@ -407,7 +405,9 @@ class TestCampaignsStream:
                 "updated_at": "2021-05-12T20:45:47+00:00",
             },
         ]
-        assert list(stream.read_records(sync_mode=SyncMode.full_refresh)) == expected_records
+        assert list(
+            stream.read_records(SyncMode.full_refresh, stream_slice={"filter": "equals(messages.channel,'{sms}')"})
+        ) == expected_records
 
     @pytest.mark.parametrize(
         ("latest_record", "current_stream_state", "expected_state"),
@@ -448,47 +448,89 @@ class TestCampaignsStream:
         stream = Campaigns(api_key=API_KEY)
         assert stream.get_updated_state(current_stream_state, latest_record) == expected_state
 
+    def test_stream_slices(self):
+        stream = Campaigns(api_key=API_KEY)
+        expected_slices = [{"filter": "equals(messages.channel,'email')"}, {"filter": "equals(messages.channel,'sms')"}]
+        assert list(stream.stream_slices(sync_mode=SyncMode.full_refresh)) == expected_slices
+
+    def test_get_campaign_messages(self, response):
+        response.json.return_value = {
+            "included": [{"id": "1", "type": "campaign-message"}, {"id": "2", "type": "campaign"}, {"id": "3"}]
+        }
+        assert Campaigns._get_campaign_messages(response) == {"1": {"id": "1", "type": "campaign-message"}}
+
+    @pytest.mark.parametrize(
+        ("input_record", "campaign_messages", "expected_record"),
+        (
+            (
+                {"attributes": {"name": "Campaign"}, "relationships": {"campaign-messages": {"data": [{"id": "1"}]}}},
+                {"1": {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}}},
+                {
+                    "attributes": {"name": "Campaign", "message": "1", "channel": "email"},
+                    "campaign_message": {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}},
+                    "relationships": {"campaign-messages": {"data": [{"id": "1"}]}},
+                },
+            ),
+            (
+                {"attributes": {"name": "Campaign"}, "relationships": {"campaign-messages": {"data": [{"id": "1"}]}}},
+                {"2": {"id": "2", "type": "campaign-message", "attributes": {"channel": "email"}}},
+                {
+                    "attributes": {"name": "Campaign", "message": "1"},
+                    "relationships": {"campaign-messages": {"data": [{"id": "1"}]}},
+                },
+            ),
+            (
+                {"attributes": {"name": "Campaign"}},
+                {"1": {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}}},
+                {"attributes": {"name": "Campaign"}},
+            ),
+        ),
+    )
+    def test_transform_record(self, input_record, campaign_messages, expected_record):
+        assert Campaigns._transform_record(input_record, campaign_messages) == expected_record
+
 
 class TestArchivedRecordsStream:
     @pytest.mark.parametrize(
-        "stream_state, next_page_token, expected_params",
+        ("stream_state", "next_page_token", "expected_params"),
         [
-            ({}, None, {"filter": "equals(archived,true)", "sort": "updated_at"}),
+            ({}, None, {"filter": "equals(archived,true)", "sort": "updated"}),
             (
-                {"archived": {"updated_at": "2023-10-10 00:00:00"}},
+                {"archived": {"updated": "2023-10-10 00:00:00"}},
                 None,
-                {"filter": "and(greater-than(updated_at,2023-10-10T00:00:00+00:00),equals(archived,true))", "sort": "updated_at"},
+                {"filter": "greater-than(updated,2023-10-10T00:00:00+00:00),equals(archived,true)", "sort": "updated"},
             ),
             (
-                {"archived": {"updated_at": "2023-10-10 00:00:00"}},
+                {"archived": {"updated": "2023-10-10 00:00:00"}},
                 {
-                    "filter": "and(greater-than(updated_at,2023-10-10T00:00:00+00:00),equals(archived,true))",
-                    "sort": "updated_at",
+                    "filter": "greater-than(updated,2023-10-10T00:00:00+00:00),equals(archived,true)",
+                    "sort": "updated",
                     "page[cursor]": "next_page_cursor",
                 },
                 {
-                    "filter": "and(greater-than(updated_at,2023-10-10T00:00:00+00:00),equals(archived,true))",
-                    "sort": "updated_at",
+                    "filter": "greater-than(updated,2023-10-10T00:00:00+00:00),equals(archived,true)",
+                    "sort": "updated",
                     "page[cursor]": "next_page_cursor",
                 },
             ),
             (
                 {},
                 {
-                    "filter": "and(greater-than(updated_at,2023-10-10T00:00:00+00:00),equals(archived,true))",
-                    "sort": "updated_at",
+                    "filter": "greater-than(updated,2023-10-10T00:00:00+00:00),equals(archived,true)",
+                    "sort": "updated",
                     "page[cursor]": "next_page_cursor",
                 },
                 {
-                    "filter": "and(greater-than(updated_at,2023-10-10T00:00:00+00:00),equals(archived,true))",
-                    "sort": "updated_at",
+                    "filter": "greater-than(updated,2023-10-10T00:00:00+00:00),equals(archived,true)",
+                    "sort": "updated",
                     "page[cursor]": "next_page_cursor",
                 },
             ),
         ],
     )
     def test_request_params(self, stream_state, next_page_token, expected_params):
-        archived_stream = ArchivedRecordsStream(api_key="API_KEY", cursor_field="updated_at", path="path")
+        base_stream = Flows(api_key=API_KEY)
+        archived_stream = ArchivedRecordsStream(base_stream=base_stream)
         assert archived_stream.request_params(
             stream_state=stream_state, next_page_token=next_page_token
         ) == expected_params

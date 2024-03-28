@@ -1503,6 +1503,10 @@ class ContactsAllBase(Stream, IncrementalMixin):
         """
 
         next_page_token = self.state
+        prior_state = self.state
+        # Also part of the hack for demoing
+        if "__ab_is_sync_complete" in next_page_token:
+            return
         logger.info(f"Read in self.state and setting next_page_token to: f{next_page_token}")
         try:
             properties = self._property_wrapper
@@ -1527,7 +1531,12 @@ class ContactsAllBase(Stream, IncrementalMixin):
 
             next_page_state = self.next_page_token(response)
             if not next_page_state:
-                self.state = {"__ab_is_sync_complete": True}
+                # This is just a temporary hack for demo purposes. Because I have the hard coded system errors. We skew the successes, and
+                # it will end up taking the max attempts. If we're done just use the last state value so we finish successfully
+                self.state = {
+                    "__ab_is_sync_complete": True,
+                    **prior_state,
+                }
             else:
                 logger.info(f"There are more records to sync Setting self.state to: f{next_page_state}")
                 self.state = next_page_state

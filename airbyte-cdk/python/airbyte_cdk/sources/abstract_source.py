@@ -208,8 +208,9 @@ class AbstractSource(Source, ABC):
         # instead of midway for failed streams. However, this has the undesirable effect of for sync jobs w/ partial success on other
         # attempts, we throw away state for successful streams and re-attempt the full refresh
         stream_state = state_manager.get_stream_state(stream_name, stream_instance.namespace)
-        if stream_state.get("__ab_is_sync_complete"):
-            stream_state = {}
+        # temporarily remove for demo purposes so we don't conveniently
+        # if stream_state.get("__ab_is_sync_complete"):
+        #     stream_state = {}
 
         if stream_state and "state" in dir(stream_instance) and not self._stream_state_is_full_refresh(stream_state):
             stream_instance.state = stream_state  # type: ignore # we check that state in the dir(stream_instance)

@@ -1484,12 +1484,11 @@ class ContactsAllBase(Stream, IncrementalMixin):
 
             is_complete = self._is_sync_complete(state_manager=state_manager)
 
-        # I removed the has_slices concept to emit a final state message because since slicing 's not as relevant to RFR
-        if sync_mode == SyncMode.full_refresh:
-            # We use a dummy state if there is no suitable value provided by full_refresh streams that do not have a valid cursor.
-            # Incremental streams running full_refresh mode emit a meaningful state
-            airbyte_state_message = self._checkpoint_state(stream_state or {"__ab_full_refresh_state_message": True}, state_manager)
-            yield airbyte_state_message
+        # I removed the has_slices concept to emit a final state message because since slicing 's not as relevant to RFR. And i got
+        # rid of delineating this for just full_refresh. In the end sync mode is irrelevant and we use whatever state is available
+        # for incremental or RFR and the last fallback is this sentinel value.
+        airbyte_state_message = self._checkpoint_state(stream_state or {"__ab_full_refresh_state_message": True}, state_manager)
+        yield airbyte_state_message
 
     def read_records(
         self,

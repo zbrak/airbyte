@@ -1367,9 +1367,6 @@ class ContactsAllBase(Stream, IncrementalMixin):
     _state = {}
     limit = 100
 
-    # todo remove later, but this is for testing
-    fail_after_records = 1800
-
     @property
     def cursor_field(self) -> Union[str, List[str]]:
         return "vidOffset"
@@ -1465,14 +1462,6 @@ class ContactsAllBase(Stream, IncrementalMixin):
                             airbyte_state_message = self._checkpoint_state(stream_state, state_manager)
                             yield airbyte_state_message
 
-                    # This is purely a hack to break the sync midway through and test that we can pick up on the next iteration
-                    if record_counter > self.fail_after_records:
-                        raise AirbyteTracedException(
-                            internal_message=f"Sometimes I crash for no other reason than that I can only process {self.fail_after_records} records per attempt",
-                            message="I crashed for an unspecific reason related to functional testing. Ask Airbyte to know more",
-                            failure_type=FailureType.system_error,
-                        )
-
                     if internal_config.is_limit_reached(record_counter):
                         break
 
@@ -1482,6 +1471,8 @@ class ContactsAllBase(Stream, IncrementalMixin):
             logger.info(f"Finished getting a page of records and now emitting state message: f{airbyte_state_message}")
             yield airbyte_state_message
 
+            # this is the important deviation for RFR where we decide if there are more "slices" to sync. Maybe
+            # this conditional check is where we pluck the next value
             is_complete = self._is_sync_complete(state_manager=state_manager)
 
         # I removed the has_slices concept to emit a final state message because since slicing 's not as relevant to RFR. And i got
@@ -1503,10 +1494,6 @@ class ContactsAllBase(Stream, IncrementalMixin):
         """
 
         next_page_token = self.state
-        prior_state = self.state
-        # Also part of the hack for demoing
-        if "__ab_is_sync_complete" in next_page_token:
-            return
         logger.info(f"Read in self.state and setting next_page_token to: f{next_page_token}")
         try:
             properties = self._property_wrapper
@@ -1531,12 +1518,7 @@ class ContactsAllBase(Stream, IncrementalMixin):
 
             next_page_state = self.next_page_token(response)
             if not next_page_state:
-                # This is just a temporary hack for demo purposes. Because I have the hard coded system errors. We skew the successes, and
-                # it will end up taking the max attempts. If we're done just use the last state value so we finish successfully
-                self.state = {
-                    "__ab_is_sync_complete": True,
-                    **prior_state,
-                }
+                self.state = {"__ab_is_sync_complete": True}
             else:
                 logger.info(f"There are more records to sync Setting self.state to: f{next_page_state}")
                 self.state = next_page_state
@@ -1577,9 +1559,6 @@ class ContactsListMemberships(ContactsAllBase):
     records_field = "list-memberships"
     filter_field = "showListMemberships"
     filter_value = True
-
-    # todo remove later, but this is for testing
-    fail_after_records = 600
 
 
 class ContactsFormSubmissions(ContactsAllBase):

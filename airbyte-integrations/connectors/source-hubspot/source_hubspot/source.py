@@ -120,11 +120,13 @@ class SourceHubspot(AbstractSource):
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         credentials = config.get("credentials", {})
         common_params = self.get_common_params(config=config)
+
+        # This is a prototype Hubspot connector that only supports resumable full refresh streams
         streams = [
-            Campaigns(**common_params),
-            Companies(**common_params),
-            ContactLists(**common_params),
-            Contacts(**common_params),
+            # Campaigns(**common_params),
+            # Companies(**common_params),
+            # ContactLists(**common_params),
+            # Contacts(**common_params),
             ContactsFormSubmissions(**common_params),
             ContactsListMemberships(**common_params),
             # ContactsMergedAudit(**common_params),
@@ -156,25 +158,25 @@ class SourceHubspot(AbstractSource):
             # Workflows(**common_params),
         ]
 
-        enable_experimental_streams = "enable_experimental_streams" in config and config["enable_experimental_streams"]
-
-        if enable_experimental_streams:
-            streams.extend(
-                [
-                    ContactsWebAnalytics(**common_params),
-                    CompaniesWebAnalytics(**common_params),
-                    DealsWebAnalytics(**common_params),
-                    TicketsWebAnalytics(**common_params),
-                    EngagementsCallsWebAnalytics(**common_params),
-                    EngagementsEmailsWebAnalytics(**common_params),
-                    EngagementsMeetingsWebAnalytics(**common_params),
-                    EngagementsNotesWebAnalytics(**common_params),
-                    EngagementsTasksWebAnalytics(**common_params),
-                    GoalsWebAnalytics(**common_params),
-                    LineItemsWebAnalytics(**common_params),
-                    ProductsWebAnalytics(**common_params),
-                ]
-            )
+        # enable_experimental_streams = "enable_experimental_streams" in config and config["enable_experimental_streams"]
+        #
+        # if enable_experimental_streams:
+        #     streams.extend(
+        #         [
+        #             ContactsWebAnalytics(**common_params),
+        #             CompaniesWebAnalytics(**common_params),
+        #             DealsWebAnalytics(**common_params),
+        #             TicketsWebAnalytics(**common_params),
+        #             EngagementsCallsWebAnalytics(**common_params),
+        #             EngagementsEmailsWebAnalytics(**common_params),
+        #             EngagementsMeetingsWebAnalytics(**common_params),
+        #             EngagementsNotesWebAnalytics(**common_params),
+        #             EngagementsTasksWebAnalytics(**common_params),
+        #             GoalsWebAnalytics(**common_params),
+        #             LineItemsWebAnalytics(**common_params),
+        #             ProductsWebAnalytics(**common_params),
+        #         ]
+        #     )
 
         api = API(credentials=credentials)
         if api.is_oauth2():
@@ -197,12 +199,12 @@ class SourceHubspot(AbstractSource):
 
         available_streams.extend(self.get_custom_object_streams(api=api, common_params=common_params))
 
-        if enable_experimental_streams:
-            custom_objects_web_analytics_streams = self.get_web_analytics_custom_objects_stream(
-                custom_object_stream_instances=self.get_custom_object_streams(api=api, common_params=common_params),
-                common_params=common_params,
-            )
-            available_streams.extend(custom_objects_web_analytics_streams)
+        # if enable_experimental_streams:
+        #     custom_objects_web_analytics_streams = self.get_web_analytics_custom_objects_stream(
+        #         custom_object_stream_instances=self.get_custom_object_streams(api=api, common_params=common_params),
+        #         common_params=common_params,
+        #     )
+        #     available_streams.extend(custom_objects_web_analytics_streams)
 
         return available_streams
 

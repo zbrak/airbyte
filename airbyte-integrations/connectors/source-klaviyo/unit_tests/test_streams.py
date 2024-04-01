@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from source_klaviyo.availability_strategy import KlaviyoAvailabilityStrategy
 from source_klaviyo.exceptions import KlaviyoBackoffError
 from source_klaviyo.source import SourceKlaviyo
-from source_klaviyo.streams import ArchivedRecordsStream, Campaigns, Flows, IncrementalKlaviyoStream, KlaviyoStream
+from source_klaviyo.streams import ArchivedRecordsStream, Campaigns, CampaignsDetailed, Flows, IncrementalKlaviyoStream, KlaviyoStream
 
 API_KEY = "some_key"
 START_DATE = pendulum.datetime(2020, 10, 10)
@@ -288,7 +288,9 @@ class TestSemiIncrementalKlaviyoStream:
 class TestProfilesStream:
     def test_request_params(self):
         stream = get_stream_by_name("profiles", CONFIG)
-        assert stream.retriever.requester.get_request_params() == {"additional-fields[profile]": "predictive_analytics"}
+        assert stream.retriever.requester.get_request_params() == {
+            "additional-fields[profile]": "predictive_analytics,subscriptions"
+        }
 
     def test_read_records(self, requests_mock):
         stream = get_stream_by_name("profiles", CONFIG)
@@ -339,7 +341,7 @@ class TestGlobalExclusionsStream:
                     "id": "00AA0A0AA0AA000AAAAAAA0AA0",
                     "attributes": {
                         "updated": "2023-03-10T20:36:36+00:00",
-                        "subscriptions": {"email": {"marketing": {"suppressions": [{"reason": "SUPPRESSED"}]}}},
+                        "subscriptions": {"email": {"marketing": {"suppression": [{"reason": "SUPPRESSED"}]}}},
                     },
                 },
                 {
@@ -358,7 +360,7 @@ class TestGlobalExclusionsStream:
                 "id": "00AA0A0AA0AA000AAAAAAA0AA0",
                 "attributes": {
                     "updated": "2023-03-10T20:36:36+00:00",
-                    "subscriptions": {"email": {"marketing": {"suppressions": [{"reason": "SUPPRESSED"}]}}},
+                    "subscriptions": {"email": {"marketing": {"suppression": [{"reason": "SUPPRESSED"}]}}},
                 },
                 "updated": "2023-03-10T20:36:36+00:00",
             }
@@ -378,14 +380,14 @@ class TestCampaignsStream:
         stream = Campaigns(api_key=API_KEY)
         requests_mock.register_uri(
             "GET",
-            "https://a.klaviyo.com/api/campaigns?sort=updated_at&filter=equals%28messages.channel%2C%27%7Bsms%7D%27%29&include=campaign-messages",
+            "https://a.klaviyo.com/api/campaigns?sort=updated_at&filter=equals%28messages.channel%2C%27%7Bsms%7D%27%29",
             status_code=200,
             json={"data": input_records},
             complete_qs=True,
         )
         requests_mock.register_uri(
             "GET",
-            "https://a.klaviyo.com/api/campaigns?sort=updated_at&filter=equals%28messages.channel%2C%27%7Bsms%7D%27%29%2Cequals%28archived%2Ctrue%29&include=campaign-messages",
+            "https://a.klaviyo.com/api/campaigns?sort=updated_at&filter=equals%28messages.channel%2C%27%7Bsms%7D%27%29%2Cequals%28archived%2Ctrue%29",
             status_code=200,
             json={"data": input_records_archived},
             complete_qs=True,
@@ -453,11 +455,77 @@ class TestCampaignsStream:
         expected_slices = [{"filter": "equals(messages.channel,'email')"}, {"filter": "equals(messages.channel,'sms')"}]
         assert list(stream.stream_slices(sync_mode=SyncMode.full_refresh)) == expected_slices
 
+    @pytest.mark.parametrize(
+        ("stream_slice", "stream_state", "expected_params"),
+        (
+            (
+                "equals(messages.channel,'email')",
+                None,
+                {"filter": "equals(messages.channel,'email')", "sort": "updated_at"},
+            ),
+            (
+                "equals(messages.channel,'sms')",
+                None,
+                {"filter": "equals(messages.channel,'sms')", "sort": "updated_at"},
+            ),
+            (
+                "equals(messages.channel,'sms')",
+                {"updated_at": "2023-10-10 00:00:00"},
+                {
+                    "filter": "greater-than(updated_at,2023-10-10T00:00:00+00:00),equals(messages.channel,'sms')",
+                    "sort": "updated_at",
+                },
+            ),
+        ),
+    )
+    def test_request_params(self, stream_slice, stream_state, expected_params):
+        stream = Campaigns(api_key=API_KEY)
+        assert stream.request_params(
+            stream_state=stream_state, stream_slice={"filter": stream_slice}
+        ) == expected_params
+
+
+class TestCampaignsDetailedStream:
+    def test_request_params(self):
+        stream = CampaignsDetailed(api_key=API_KEY)
+        params = stream.request_params(stream_state=None, stream_slice={"filter": "equals(messages.channel,'email')"})
+        assert "include" in params
+        assert params["include"] == "campaign-messages"
+
     def test_get_campaign_messages(self, response):
         response.json.return_value = {
             "included": [{"id": "1", "type": "campaign-message"}, {"id": "2", "type": "campaign"}, {"id": "3"}]
         }
-        assert Campaigns._get_campaign_messages(response) == {"1": {"id": "1", "type": "campaign-message"}}
+        assert CampaignsDetailed._get_campaign_messages(response) == {"1": {"id": "1", "type": "campaign-message"}}
+
+    def test_set_recipient_count(self, requests_mock):
+        stream = CampaignsDetailed(api_key=API_KEY)
+        campaign_id = "1"
+        record = {"id": campaign_id, "attributes": {"name": "Campaign"}}
+        estimated_recipient_count = 5
+
+        requests_mock.register_uri(
+            "GET",
+            f"https://a.klaviyo.com/api/campaign-recipient-estimations/{campaign_id}",
+            status_code=200,
+            json={"data": {"attributes": {"estimated_recipient_count": estimated_recipient_count}}},
+        )
+        stream._set_recipient_count(record)
+        assert record["estimated_recipient_count"] == estimated_recipient_count
+
+    def test_set_recipient_count_not_found(self, requests_mock):
+        stream = CampaignsDetailed(api_key=API_KEY)
+        campaign_id = "1"
+        record = {"id": campaign_id, "attributes": {"name": "Campaign"}}
+
+        requests_mock.register_uri(
+            "GET",
+            f"https://a.klaviyo.com/api/campaign-recipient-estimations/{campaign_id}",
+            status_code=404,
+            json={},
+        )
+        stream._set_recipient_count(record)
+        assert record["estimated_recipient_count"] == 0
 
     @pytest.mark.parametrize(
         ("input_record", "campaign_messages", "expected_record"),
@@ -466,28 +534,49 @@ class TestCampaignsStream:
                 {"attributes": {"name": "Campaign"}, "relationships": {"campaign-messages": {"data": [{"id": "1"}]}}},
                 {"1": {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}}},
                 {
-                    "attributes": {"name": "Campaign", "message": "1", "channel": "email"},
-                    "campaign_message": {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}},
+                    "attributes": {"name": "Campaign"},
+                    "campaign_messages": [{"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}}],
                     "relationships": {"campaign-messages": {"data": [{"id": "1"}]}},
+                },
+            ),
+            (
+                {
+                    "attributes": {"name": "Campaign"},
+                    "relationships": {"campaign-messages": {"data": [{"id": "1"}, {"id": "2"}]}},
+                },
+                {
+                    "1": {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}},
+                    "2": {"id": "2", "type": "campaign-message", "attributes": {"channel": "sms"}},
+                    "3": {"id": "3", "type": "campaign-message", "attributes": {"channel": "sms"}},
+                },
+                {
+                    "attributes": {"name": "Campaign"},
+                    "campaign_messages": [
+                        {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}},
+                        {"id": "2", "type": "campaign-message", "attributes": {"channel": "sms"}},
+                    ],
+                    "relationships": {"campaign-messages": {"data": [{"id": "1"}, {"id": "2"}]}},
                 },
             ),
             (
                 {"attributes": {"name": "Campaign"}, "relationships": {"campaign-messages": {"data": [{"id": "1"}]}}},
                 {"2": {"id": "2", "type": "campaign-message", "attributes": {"channel": "email"}}},
                 {
-                    "attributes": {"name": "Campaign", "message": "1"},
+                    "attributes": {"name": "Campaign"},
+                    "campaign_messages": [],
                     "relationships": {"campaign-messages": {"data": [{"id": "1"}]}},
                 },
             ),
             (
                 {"attributes": {"name": "Campaign"}},
                 {"1": {"id": "1", "type": "campaign-message", "attributes": {"channel": "email"}}},
-                {"attributes": {"name": "Campaign"}},
+                {"attributes": {"name": "Campaign"}, "campaign_messages": []},
             ),
         ),
     )
-    def test_transform_record(self, input_record, campaign_messages, expected_record):
-        assert Campaigns._transform_record(input_record, campaign_messages) == expected_record
+    def test_set_campaign_messages(self, input_record, campaign_messages, expected_record):
+        CampaignsDetailed._set_campaign_messages(input_record, campaign_messages)
+        assert input_record == expected_record
 
 
 class TestArchivedRecordsStream:

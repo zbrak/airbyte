@@ -1,4 +1,4 @@
-version: 0.77.2
+version: 0.78.1
 type: DeclarativeSource
 
 definitions:
@@ -82,11 +82,8 @@ definitions:
         inject_into: request_parameter
     requester:
       $ref: "#/definitions/requester"
-      request_headers:
-        Accept: "application/json"
-        Revision: "2023-02-22"
       request_parameters:
-        "additional-fields[profile]": "predictive_analytics"
+        "additional-fields[profile]": "predictive_analytics,subscriptions"
 
   # Base streams
   base_stream:
@@ -145,7 +142,7 @@ definitions:
         $ref: "#/definitions/selector"
         record_filter:
           type: RecordFilter
-          condition: "{{ record['attributes']['subscriptions']['email']['marketing']['suppressions'] }}"
+          condition: "{{ record['attributes']['subscriptions']['email']['marketing']['suppression'] }}"
 
   events_stream:
     # Docs: https://developers.klaviyo.com/en/reference/get_events

@@ -105,6 +105,18 @@
               }
             }
           }
+        },
+        "conversation": {
+          "type": ["null", "object"],
+          "properties": {
+            "links": {
+              "type": ["null", "object"],
+              "properties": {
+                "self": { "type": ["null", "string"] },
+                "related": { "type": ["null", "string"] }
+              }
+            }
+          }
         }
       }
     },

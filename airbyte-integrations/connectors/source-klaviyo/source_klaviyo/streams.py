@@ -13,6 +13,7 @@ from airbyte_cdk.sources.streams.availability_strategy import AvailabilityStrate
 from airbyte_cdk.sources.streams.core import StreamData
 from airbyte_cdk.sources.streams.http import HttpStream
 from requests import Response
+from requests.exceptions import HTTPError
 
 from .availability_strategy import KlaviyoAvailabilityStrategy
 from .exceptions import KlaviyoBackoffError
@@ -194,6 +195,9 @@ class ArchivedRecordsStream(IncrementalKlaviyoStream):
             params["filter"] = archived_filter
         return params
 
+    def parse_response(self, response: Response, **kwargs: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
+        yield from self._base_stream.parse_response(response, **kwargs)
+
 
 class StreamWithArchivedRecords(IncrementalKlaviyoStream, ABC):
     """A mixin class which should be used when archived records need to be read"""
@@ -256,32 +260,58 @@ class Campaigns(StreamWithArchivedRecords):
         else:
             params["filter"] = channel_type_filter
 
-        params["include"] = "campaign-messages"
         return params
 
-    @staticmethod
-    def _transform_record(record: Mapping[str, Any], campaign_messages: Mapping[str, Any]) -> Mapping[str, Any]:
-        campaign_message_id = record.get("relationships", {}).get("campaign-messages", {}).get("data", [{}])[0].get("id")
-        if campaign_message_id:
-            record["attributes"]["message"] = campaign_message_id
-            campaign_message = campaign_messages.get(campaign_message_id)
-            if campaign_message:
-                record["attributes"]["channel"] = campaign_message.get("attributes", {}).get("channel")
-                record["campaign_message"] = campaign_message
+    def path(self, **kwargs: Mapping[str, Any]) -> str:
+        return "campaigns"
 
-        return record
 
-    @staticmethod
-    def _get_campaign_messages(response: Response) -> Mapping[str, Any]:
-        return {message["id"]: message for message in response.json().get("included", []) if message.get("type") == "campaign-message"}
+class CampaignsDetailed(Campaigns):
+    raise_on_http_errors = False
+
+    def request_params(
+        self,
+        stream_state: Optional[Mapping[str, Any]],
+        stream_slice: Optional[Mapping[str, Any]] = None,
+        next_page_token: Optional[Mapping[str, Any]] = None,
+    ) -> MutableMapping[str, Any]:
+        params = super().request_params(stream_state, stream_slice, next_page_token)
+        params["include"] = "campaign-messages"
+        return params
 
     def parse_response(self, response: Response, **kwargs: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         campaign_messages = self._get_campaign_messages(response)
         for record in super().parse_response(response, **kwargs):
             yield self._transform_record(record, campaign_messages)
 
-    def path(self, **kwargs: Mapping[str, Any]) -> str:
-        return "campaigns"
+    def _transform_record(self, record: Mapping[str, Any], campaign_messages: Mapping[str, Any]) -> Mapping[str, Any]:
+        self._set_recipient_count(record)
+        self._set_campaign_messages(record, campaign_messages)
+        return record
+
+    def _set_recipient_count(self, record: Mapping[str, Any]) -> None:
+        campaign_id = record["id"]
+        recipient_count_request = self._create_prepared_request(
+            path=f"{self.url_base}campaign-recipient-estimations/{campaign_id}",
+            headers=self.request_headers(),
+        )
+        recipient_count_response = self._send_request(recipient_count_request, {})
+        record["estimated_recipient_count"] = (
+            recipient_count_response.json().get("data", {}).get("attributes", {}).get("estimated_recipient_count", 0)
+        )
+
+    @staticmethod
+    def _set_campaign_messages(record: Mapping[str, Any], campaign_messages: Mapping[str, Any]) -> None:
+        messages_found = []
+        for message_data in record.get("relationships", {}).get("campaign-messages", {}).get("data", []):
+            if campaign_message_id := message_data.get("id"):
+                if campaign_message := campaign_messages.get(campaign_message_id):
+                    messages_found.append(campaign_message)
+        record["campaign_messages"] = messages_found
+
+    @staticmethod
+    def _get_campaign_messages(response: Response) -> Mapping[str, Any]:
+        return {message["id"]: message for message in response.json().get("included", []) if message.get("type") == "campaign-message"}
 
 
 class Flows(StreamWithArchivedRecords):

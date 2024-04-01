@@ -13,7 +13,7 @@
             "consent": {
               "type": "string"
             },
-            "timestamp": {
+            "consent_timestamp": {
               "type": ["null", "string"],
               "format": "date-time"
             },
@@ -33,7 +33,7 @@
             "double_optin": {
               "type": ["null", "boolean"]
             },
-            "suppressions": {
+            "suppression": {
               "type": ["null", "array"],
               "items": {
                 "type": ["null", "object"],
@@ -93,10 +93,6 @@
               "type": ["null", "string"]
             },
             "last_updated": {
-              "type": ["null", "string"],
-              "format": "date-time"
-            },
-            "timestamp": {
               "type": ["null", "string"],
               "format": "date-time"
             }

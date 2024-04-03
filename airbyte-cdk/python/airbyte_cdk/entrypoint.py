@@ -46,6 +46,7 @@ class AirbyteEntrypoint(object):
 
         self.source = source
         self.logger = logging.getLogger(f"airbyte.{getattr(source, 'name', '')}")
+        self._state_message_counter: DefaultDict[HashableStreamDescriptor, int] = defaultdict(int)
 
     @staticmethod
     def parse_args(args: List[str]) -> argparse.Namespace:
@@ -168,11 +169,17 @@ class AirbyteEntrypoint(object):
         for message in self._emit_queued_messages(self.source):
             yield self.handle_record_counts(message, stream_message_counter)
 
-    @staticmethod
-    def handle_record_counts(message: AirbyteMessage, stream_message_count: DefaultDict[HashableStreamDescriptor, float]) -> AirbyteMessage:
+    def handle_record_counts(
+        self, message: AirbyteMessage, stream_message_count: DefaultDict[HashableStreamDescriptor, float]
+    ) -> AirbyteMessage:
         if message.type == Type.RECORD:
             stream_message_count[message_utils.get_stream_descriptor(message)] += 1.0
-
+            if self.source.__class__.__name__ == "SourceStripe":
+                stream_descriptor = message_utils.get_stream_descriptor(message)
+                if stream_descriptor.name == "accounts" and self._state_message_counter[stream_descriptor] > 0:
+                    logger.info(
+                        "Found additional outbound record after what should be a final state message for full refresh accounts stream"
+                    )
         elif message.type == Type.STATE:
             stream_descriptor = message_utils.get_stream_descriptor(message)
 
@@ -180,8 +187,12 @@ class AirbyteEntrypoint(object):
             message.state.sourceStats = message.state.sourceStats or AirbyteStateStats()
             message.state.sourceStats.recordCount = stream_message_count.get(stream_descriptor, 0.0)
 
+            if self.source.__class__.__name__ == "SourceStripe" and stream_descriptor.name == "accounts":
+                logger.info(f"Emitting a state message with recordCount {stream_message_count.get(stream_descriptor, 0.0)}")
+
             # Reset the counter
             stream_message_count[stream_descriptor] = 0.0
+            self._state_message_counter[stream_descriptor] += 1
         return message
 
     @staticmethod

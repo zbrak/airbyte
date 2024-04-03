@@ -426,3 +426,23 @@ def test_handle_record_counts(incoming_message, stream_message_count, expected_m
 
     if actual_message.type == Type.STATE:
         assert isinstance(actual_message.state.sourceStats.recordCount, float), "recordCount value should be expressed as a float"
+
+
+def test_handle_extra_records(caplog):
+    mock_source = MockSource()
+    mock_source.__class__.__name__ = "SourceStripe"
+    entrypoint = AirbyteEntrypoint(source=mock_source)
+    default_message_count = defaultdict(float)
+    default_message_count[HashableStreamDescriptor(name="accounts")] = 100.0
+    entrypoint.handle_record_counts(
+        message=AirbyteMessage(type=Type.STATE, state=AirbyteStateMessage(type=AirbyteStateType.STREAM, stream=AirbyteStreamState(
+                stream_descriptor=StreamDescriptor(name="accounts")))),
+        stream_message_count=default_message_count
+        )
+
+    entrypoint.handle_record_counts(
+        message=AirbyteMessage(type=Type.RECORD, record=AirbyteRecordMessage(stream="accounts", data={"id": "12345"}, emitted_at=1)),
+        stream_message_count=default_message_count
+    )
+
+    assert len(caplog.records) == 2

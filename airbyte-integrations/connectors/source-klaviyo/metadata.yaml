@@ -37,6 +37,12 @@ data:
       3.0.0:
         message: This release contains schema changes for streams `campaigns`, `global_exclusions`, and `profiles`. Users will need to refresh the source schemas and reset these streams after upgrading.
         upgradeDeadline: "2024-04-29"
+        scopedImpact:
+          - scopeType: stream
+            impactedScopes:
+              - "campaigns"
+              - "global_exclusions"
+              - "profiles"
       2.0.0:
         message: In this release, streams `campaigns`, `email_templates`, `events`, `flows`, `global_exclusions`, `lists`, and `metrics` are now pulling data using latest API which has a different schema. Users will need to refresh the source schemas and reset these streams after upgrading.
         upgradeDeadline: "2023-11-30"

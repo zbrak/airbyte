@@ -80,7 +80,7 @@ abstract class BaseSqlGeneratorIntegrationTest<DestinationState : MinimumDestina
      * Subclasses should override this method if they need to make changes to the stream ID. For
      * example, you could upcase the final table name here.
      */
-    protected fun buildStreamId(
+    open protected fun buildStreamId(
         namespace: String,
         finalTableName: String,
         rawTableName: String
@@ -149,7 +149,7 @@ abstract class BaseSqlGeneratorIntegrationTest<DestinationState : MinimumDestina
         /** Identical to [BaseTypingDedupingTest.getRawMetadataColumnNames]. */
         get() = HashMap()
 
-    protected val finalMetadataColumnNames: Map<String, String>
+    open protected val finalMetadataColumnNames: Map<String, String>
         /** Identical to [BaseTypingDedupingTest.getFinalMetadataColumnNames]. */
         get() = HashMap()
 
@@ -734,7 +734,7 @@ abstract class BaseSqlGeneratorIntegrationTest<DestinationState : MinimumDestina
      */
     @Test
     @Throws(Exception::class)
-    fun ignoreOldRawRecords() {
+    open fun ignoreOldRawRecords() {
         createRawTable(streamId)
         createFinalTable(incrementalAppendStream, "")
         insertRawTableRecords(
@@ -1529,7 +1529,10 @@ abstract class BaseSqlGeneratorIntegrationTest<DestinationState : MinimumDestina
         executeSoftReset(generator!!, destinationHandler!!, incrementalAppendStream!!)
     }
 
-    protected fun migrationAssertions(v1RawRecords: List<JsonNode>, v2RawRecords: List<JsonNode>) {
+    protected open fun migrationAssertions(
+        v1RawRecords: List<JsonNode>,
+        v2RawRecords: List<JsonNode>
+    ) {
         val v2RecordMap =
             v2RawRecords
                 .stream()
@@ -1580,7 +1583,7 @@ abstract class BaseSqlGeneratorIntegrationTest<DestinationState : MinimumDestina
     }
 
     @Throws(Exception::class)
-    protected fun dumpV1RawTableRecords(streamId: StreamId): List<JsonNode> {
+    open protected fun dumpV1RawTableRecords(streamId: StreamId): List<JsonNode> {
         return dumpRawTableRecords(streamId)
     }
 
@@ -1652,7 +1655,7 @@ abstract class BaseSqlGeneratorIntegrationTest<DestinationState : MinimumDestina
     }
 
     @Test
-    fun testLongIdentifierHandling() {
+    open fun testLongIdentifierHandling() {
         val randomSuffix = Strings.addRandomSuffix("", "_", 5)
         val rawNamespace = "a".repeat(512) + randomSuffix
         val finalNamespace = "b".repeat(512) + randomSuffix

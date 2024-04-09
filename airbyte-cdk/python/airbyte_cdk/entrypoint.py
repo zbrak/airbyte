@@ -174,11 +174,11 @@ class AirbyteEntrypoint(object):
     ) -> AirbyteMessage:
         if message.type == Type.RECORD:
             stream_message_count[message_utils.get_stream_descriptor(message)] += 1.0
-            if self.source.__class__.__name__ == "SourceStripe":
-                stream_descriptor = message_utils.get_stream_descriptor(message)
-                if stream_descriptor.name == "accounts":
-                    # This is testing if the volume of records/messages is choking the print() leading to dropped records
-                    time.sleep(0.1)
+            # if self.source.__class__.__name__ == "SourceStripe":
+            #     stream_descriptor = message_utils.get_stream_descriptor(message)
+            #     if stream_descriptor.name == "accounts":
+            #         # This is testing if the volume of records/messages is choking the print() leading to dropped records
+            #         time.sleep(0.1)
 
         elif message.type == Type.STATE:
             stream_descriptor = message_utils.get_stream_descriptor(message)

@@ -186,7 +186,8 @@ class TypeTransformer:
             just calling normalizer.validate() would throw an exception on
             first validation occurences and stop processing rest of schema.
             """
-            logger.warning(self.get_error_message(e))
+            # Temporarily commenting out to reduce log noise to see if this impacts print() functionality
+            # logger.warning(self.get_error_message(e))
 
     def get_error_message(self, e: ValidationError) -> str:
         instance_json_type = python_to_json[type(e.instance)]

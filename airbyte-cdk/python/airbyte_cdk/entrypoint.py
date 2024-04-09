@@ -10,6 +10,7 @@ import os.path
 import socket
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from functools import wraps
 from typing import Any, DefaultDict, Iterable, List, Mapping, MutableMapping, Optional, Union
@@ -46,7 +47,6 @@ class AirbyteEntrypoint(object):
 
         self.source = source
         self.logger = logging.getLogger(f"airbyte.{getattr(source, 'name', '')}")
-        self._state_message_counter: DefaultDict[HashableStreamDescriptor, int] = defaultdict(int)
 
     @staticmethod
     def parse_args(args: List[str]) -> argparse.Namespace:
@@ -177,18 +177,8 @@ class AirbyteEntrypoint(object):
             if self.source.__class__.__name__ == "SourceStripe":
                 stream_descriptor = message_utils.get_stream_descriptor(message)
                 if stream_descriptor.name == "accounts":
-                    # This is super hacky, I normally would do this lower in the CDK where we have full context of the source and
-                    # stream being synced, but for the purposes of diagnosing count mismatches, putting the logs at the very edge
-                    # of the entrypoint puts us as close to the platform as we can get.
-                    primary_key = "id"
-                    pk_val = message.record.data.get(primary_key)
-                    if pk_val:
-                        row_len = len(str(message.record.data))
-                        logger.info(f"[record_count_diagnostic] Emitting record with pk: {pk_val} and row length was {row_len} characters")
-                    if self._state_message_counter[stream_descriptor] > 0:
-                        logger.info(
-                            "[record_count_diagnostic] Found additional outbound record after what should be a final state message for full refresh accounts stream"
-                        )
+                    # This is testing if the volume of records/messages is choking the print() leading to dropped records
+                    time.sleep(0.1)
 
         elif message.type == Type.STATE:
             stream_descriptor = message_utils.get_stream_descriptor(message)
@@ -198,14 +188,7 @@ class AirbyteEntrypoint(object):
             message.state.sourceStats.recordCount = stream_message_count.get(stream_descriptor, 0.0)
 
             # Reset the counter
-            prev_count = stream_message_count.get(stream_descriptor, 0.0)
             stream_message_count[stream_descriptor] = 0.0
-            if self.source.__class__.__name__ == "SourceStripe":
-                logger.info(
-                    f"[record_count_diagnostic] Emitting a state message for {stream_descriptor.name} with recordCount {prev_count} and resetting back to 0.0"
-                )
-                logger.info(f"[record_count_diagnostic] The current counts across all streams are: {stream_message_count.items()}")
-            self._state_message_counter[stream_descriptor] += 1
         return message
 
     @staticmethod

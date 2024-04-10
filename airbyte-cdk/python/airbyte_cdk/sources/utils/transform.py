@@ -187,7 +187,7 @@ class TypeTransformer:
             first validation occurences and stop processing rest of schema.
             """
             # Temporarily commenting out to reduce log noise to see if this impacts print() functionality
-            # logger.warning(self.get_error_message(e))
+            logger.warning(self.get_error_message(e))
 
     def get_error_message(self, e: ValidationError) -> str:
         instance_json_type = python_to_json[type(e.instance)]
